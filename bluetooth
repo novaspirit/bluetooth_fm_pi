@@ -1,0 +1,63 @@
+#!/bin/bash
+AUDIOSINK="alsa_output.platform-bcm2835_AUD0.0.analog-stereo"
+ACTION=$(expr "$ACTION" : "\([a-zA-Z]\+\).*")
+echo "Executing bluetooth script...|$ACTION|" >> /var/log/bluetooth_dev
+if [ "$ACTION" = "add" ]
+then
+  # Turn off BT discover mode before connecting existing BT device to audio
+  hciconfig hci0 noscan
+  # Turn off BT auto connect if it is still running
+  sudo killall bluetooth-auto
+
+  # set the audio output to the hdmi
+  amixer cset numid=3 2
+  # Set volume level to 100 percent
+  amixer set Master 100%
+  # Set sink volume to 125%
+  pacmd set-sink-volume 0 0x12500
+
+  for dev in $(find /sys/devices/virtual/input/ -name input*)
+    do
+	if [ -f "$dev/name" ]
+	then
+	
+	  mac=$(cat "$dev/name")
+	  # Add this mac address to list of trusted addresses
+	  TRUST=$(grep "$mac" /usr/lib/udev/bluetooth-trust)
+	  if [ -z "$TRUST" ]
+	  then
+		echo "Adding $mac to trusted addresses" >> /var/log/bluetooth_dev
+		echo $mac >> /usr/lib/udev/bluetooth-trust
+	  fi
+	  
+	  mac_underscore=$(cat "$dev/name" | sed 's/:/_/g')
+	  bluez_dev=bluez_source.$mac_underscore
+	  
+	  # Set source volume to 125%
+	  pacmd set-source-volume $bluez_dev 0x12500
+
+	  sleep 1
+	  CONFIRM=`sudo -u pi pactl list short | grep $bluez_dev`
+	  if [ ! -z "$CONFIRM" ]
+	  then
+		echo "Setting bluez_source to:  $bluez_dev" >> /var/log/bluetooth_dev
+		echo pactl load-module module-loopback source=$bluez_dev sink=$AUDIOSINK rate=44100 adjust_time=0 >> /var/log/bluetooth_dev
+		sudo -u pi pactl load-module module-loopback source=$bluez_dev sink=$AUDIOSINK rate=44100 adjust_time=0 >> /var/log/bluetooth_dev
+		echo "Killing any existing radio connections" >> /var/log/bluetooth_dev
+		sudo killall pifm >> /var/log/bluetooth_dev
+		echo "Connecting bluetooth output to radio input, playing on 87.7" >> /var/log/bluetooth_dev
+		# Using $AUDIOSINK instead of 0 here doesn't seem to work, not sure why
+		echo pacat -r -d 0 --latency-msec=50 | sox -t raw -r 44100 -e signed-integer -b 16 -c 2 - -t wav - gain -l 10 | sudo /home/pi/fm/pifm - 87.9 44100 stereo >> /var/log/bluetooth_dev
+		sudo -u pi pacat -r -d 0 --latency-msec=50 | sudo -u pi sox -t raw -r 44100 -e signed-integer -b 16 -c 2 - -t wav - gain -l 10 | sudo /home/pi/fm/pifm - 87.7 44100 stereo >> /var/log/bluetooth_dev
+	  fi
+	fi
+  done
+fi
+
+if [ "$ACTION" = "remove" ]
+then
+  # Turn on bluetooth discovery if device disconnects
+  sudo hciconfig hci0 piscan
+  # Turn on bluetooth auto discovery
+  sudo /usr/lib/udev/bluetooth-auto &
+fi
