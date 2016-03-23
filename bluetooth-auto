@@ -1,0 +1,19 @@
+#!/bin/bash
+while [ true ]
+do
+  sleep 1
+  echo "Scanning for trusted devices" >> /var/log/bluetooth_dev
+  for mac in $(sudo hcitool scan | grep ":" | awk '{print $1}')
+  do
+	trust=$(grep "$mac" /usr/lib/udev/bluetooth-trust)
+	if [ ! -z "$trust" ]
+	then
+	  _BT_ADAPTER=`dbus-send --system --print-reply --dest=org.bluez / org.bluez.Manager.DefaultAdapter|awk '/object path/ {print $3}'`
+	  BT_ADAPTER=${_BT_ADAPTER//\"/}
+	  mac_underscore=$(cat "$mac" | sed 's/:/_/g')
+	  echo "Connecting to device at: $mac" >> /var/log/bluetooth_dev
+	  sudo dbus-send --print-reply --system --dest=org.bluez $BT_ADAPTER/dev_$mac_underscore org.bluez.AudioSource.Connect >> /var/log/bluetooth_dev
+	  exit 0
+	fi
+  done
+done
